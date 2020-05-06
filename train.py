@@ -163,14 +163,20 @@ def get_model_input_features(architecture_name, trained_model, is_custom_hidden_
     num_of_input_features = 0
     
     #Default vgg16
-    if (architecture_name == 'vgg16') or (architecture_name == 'alexnet'):      
+    if architecture_name == 'vgg16':      
         if is_custom_hidden_units:
             #Number of Input Features
             num_of_input_features = trained_model.classifier[0].in_features
         else:
             #Number of Input Features
             num_of_input_features = trained_model.classifier[6].in_features
-
+    elif architecture_name == 'alexnet':
+        if is_custom_hidden_units:
+            #Number of Input Features
+            num_of_input_features = trained_model.classifier[1].in_features
+        else:
+            #Number of Input Features
+            num_of_input_features = trained_model.classifier[6].in_features
     elif architecture_name == 'resnet18':
         #Number of Input Features
         num_of_input_features = trained_model.fc.in_features
@@ -231,35 +237,30 @@ def get_classifier(trained_model, architecture_name, model_hidden_units, num_of_
 
             if model_hidden_units < num_of_input_features:
                 #Default vgg16
-                if (architecture_name == 'vgg16') or (architecture_name == 'alexnet'):  
-                    #trained_model.classifier = trained_classifier 
+                if architecture_name == 'vgg16': 
+                    trained_classifier = nn.Sequential(nn.Linear(num_of_input_features,model_hidden_units),
+                                                       nn.ReLU(inplace=True),
+                                                       nn.Dropout(0.5),
+                                                       nn.Linear(model_hidden_units,model_hidden_units),
+                                                       nn.ReLU(inplace=True),
+                                                       nn.Dropout(0.5),
+                                                       nn.Linear(model_hidden_units, num_of_desired_outputs))
+                                                       
+                    trained_model.classifier = trained_classifier   
+                elif architecture_name == 'alexnet':  
+                    trained_classifier = nn.Sequential(nn.Dropout(0.5), 
+                                                       nn.Linear(num_of_input_features,model_hidden_units),
+                                                       nn.ReLU(inplace=True),
+                                                       nn.Dropout(0.5),
+                                                       nn.Linear(model_hidden_units,model_hidden_units),
+                                                       nn.ReLU(inplace=True),
+                                                       nn.Linear(model_hidden_units, num_of_desired_outputs))
                     
-                    state_dict = trained_model.state_dict()
-                    #Iterate over the New Model to validate layers, weights, bias, and classifier
-                    for name, param in state_dict.items():
-                        if 'classifier' in name:
-                            if 'weight' in name:
-                                if 'classifier.1' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units, num_of_input_features))
-                                if 'classifier.4' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units, model_hidden_units))
-                                if 'classifier.6' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(num_of_desired_outputs, model_hidden_units))
-                            if 'bias' in name:
-                                if 'classifier.1' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units))
-                                if 'classifier.4' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units))
-                                if 'classifier.6' in name:
-                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(num_of_desired_outputs))
-                    
-                    trained_classifier = trained_model.classifier
-                    
-                    #Validate Hidden Units substituted within Classifier                                
-                    print(trained_classifier)                                
+                    trained_model.classifier = trained_classifier                   
                 elif architecture_name == 'resnet18': 
-                    #trained_model.fc = trained_classifier
-                    print("#TODO:  NEED TO FIGURE THIS ONE OUT")
+                    print("train.py - Function: get_classifier")
+                    print("WARNING:  This model does not have any hidden units to replace with the ")
+                    print("          value passed at the command line: ", model_hidden_units)
                 else:
                     print("train.py - Function: get_classifier")
                     print("ERROR:  Unable to construct classifier with the Model ")
@@ -271,6 +272,9 @@ def get_classifier(trained_model, architecture_name, model_hidden_units, num_of_
                 print("train.py - Function: get_classifier")
                 print(error_stmt_one.format(mhu = model_hidden_units))
                 print(error_stmt_two.format(noif = num_of_input_features))
+                
+            #Validate Hidden Units substituted within Classifier                                
+            #print(trained_classifier)               
         else:
             error_stmt_one = "\nERROR:  The Model Hidden Units {mhu:}, passed at the command line, must be "
             error_stmt_two = "greater than the desired output layer size {ols:}"
