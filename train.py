@@ -192,7 +192,7 @@ def get_classifier(trained_model, architecture_name, model_hidden_units, num_of_
     
     num_of_input_features = 0
     features = None
-    classifier = nn.Sequential()
+    trained_classifier = None
     _hidden_layers = False
     
     if (model_hidden_units >= 0) and (model_hidden_units <= 1):
@@ -224,58 +224,53 @@ def get_classifier(trained_model, architecture_name, model_hidden_units, num_of_
     else:
         if model_hidden_units > num_of_desired_outputs:
             #Declare required Hidden Layer Attributes
-            hidden_layer_od = OrderedDict()
-            layer_number = 2
-            i = 0
             _hidden_layers = True
             
             #Number of Input Features
-            num_of_input_features = get_model_input_features(architecture_name, trained_model, True)
-            
-            hidden_layer_number_pool = num_of_input_features - num_of_desired_outputs #24986
-            input_size_per_hidden_layer = num_of_input_features #25088
-            batch_size = int(hidden_layer_number_pool / (model_hidden_units + 1)) #8328
-            output_size_per_hidden_layer = input_size_per_hidden_layer - batch_size #16760
-            
-            #Seed the Ordered Dictionary with the first layer
-            hidden_layer_od['fc1'] = nn.Linear(input_size_per_hidden_layer, output_size_per_hidden_layer)
-            hidden_layer_od['relu1'] = nn.ReLU(inplace=True)
-            hidden_layer_od['dropout1'] = nn.Dropout(0.5)
-            
-            #Re-calibrate the Hidden Layer Input Size for next layer
-            input_size_per_hidden_layer = output_size_per_hidden_layer
-            
-            #Iterate over number of Hidden Layers passed at command line
-            for i in range(model_hidden_units):                               
-                #Calculate Hidden Output Layer Size
-                output_size_per_hidden_layer = input_size_per_hidden_layer - batch_size
-                
-                #Construct Hidden Layer
-                hidden_layer_od['fc' + str(layer_number)] = nn.Linear(input_size_per_hidden_layer, output_size_per_hidden_layer)
-                hidden_layer_od['relu' + str(layer_number)] = nn.ReLU(inplace=True)
-                hidden_layer_od['dropout' + str(layer_number)] = nn.Dropout(0.5)
-                
-                #Re-calibrate the Hidden Layer Input Size for next layer
-                input_size_per_hidden_layer = output_size_per_hidden_layer
-                
-                #Hidder Layer Qualifier/KEY
-                layer_number = layer_number + 1
-              
-            #Append the Output Layer to the Ordered Dictionary
-            hidden_layer_od['fc' + str(layer_number)] = nn.Linear(input_size_per_hidden_layer, num_of_desired_outputs)
-            hidden_layer_od['logsoftmax'] = nn.LogSoftmax(dim=1)       
-            
-            trained_classifier = nn.Sequential(hidden_layer_od)
-            
-            #Default vgg16
-            if (architecture_name == 'vgg16') or (architecture_name == 'alexnet'):  
-                trained_model.classifier = trained_classifier 
-            elif architecture_name == 'resnet18': 
-                trained_model.fc = trained_classifier
+            num_of_input_features = get_model_input_features(architecture_name, trained_model, True)   
+
+            if model_hidden_units < num_of_input_features:
+                #Default vgg16
+                if (architecture_name == 'vgg16') or (architecture_name == 'alexnet'):  
+                    #trained_model.classifier = trained_classifier 
+                    
+                    state_dict = trained_model.state_dict()
+                    #Iterate over the New Model to validate layers, weights, bias, and classifier
+                    for name, param in state_dict.items():
+                        if 'classifier' in name:
+                            if 'weight' in name:
+                                if 'classifier.1' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units, num_of_input_features))
+                                if 'classifier.4' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units, model_hidden_units))
+                                if 'classifier.6' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(num_of_desired_outputs, model_hidden_units))
+                            if 'bias' in name:
+                                if 'classifier.1' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units))
+                                if 'classifier.4' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(model_hidden_units))
+                                if 'classifier.6' in name:
+                                    trained_model.state_dict()[name][:] = torch.nn.Parameter(torch.Tensor(num_of_desired_outputs))
+                    
+                    trained_classifier = trained_model.classifier
+                    
+                    #Validate Hidden Units substituted within Classifier                                
+                    print(trained_classifier)                                
+                elif architecture_name == 'resnet18': 
+                    #trained_model.fc = trained_classifier
+                    print("#TODO:  NEED TO FIGURE THIS ONE OUT")
+                else:
+                    print("train.py - Function: get_classifier")
+                    print("ERROR:  Unable to construct classifier with the Model ")
+                    print("        Unknown model passed at the command line: ", model_hidden_units)
             else:
+                error_stmt_one = "\nERROR:  The Model Hidden Units {mhu:}, passed at the command line, must be "
+                error_stmt_two = "less than the size of the input features {noif:}"
+
                 print("train.py - Function: get_classifier")
-                print("ERROR:  Unable to construct classifier with the Model ")
-                print("        Unknown model passed at the command line: ", model_hidden_units)
+                print(error_stmt_one.format(mhu = model_hidden_units))
+                print(error_stmt_two.format(noif = num_of_input_features))
         else:
             error_stmt_one = "\nERROR:  The Model Hidden Units {mhu:}, passed at the command line, must be "
             error_stmt_two = "greater than the desired output layer size {ols:}"
@@ -653,25 +648,26 @@ if os.path.isdir(input_file_directory):
                         #Conditionally test for type and value:  model_learning_Rate and model_epochs
                         if (type(model_learning_Rate) is float) and (model_learning_Rate > 0):
                             if (type(model_epochs) is int) and (model_epochs > 0):
-                                #-- -----------------------------------------------------------------------------------
-                                # - The parameters of the feedforward classifier are appropriately trained, 
-                                #       while the parameters of the feature network are left static
-                                # - The network's accuracy is measured on the test data
-                                # - During training, the validation loss and accuracy are displayed
-                                #-- ----------------------------------------------------------------------------------- 
-                                trained_model, trained_optimizer, trained_loss, trained_epochs = train_the_model(trained_model, \
-                                                                model_architecture, __device_available__, model_learning_Rate, \
-                                                                model_epochs, dataimageloader, testloader)
-                                
-                                #-- -----------------------------------------------------------------------------------
-                                # - There is a function that successfully loads a checkpoint and rebuilds the model
-                                # - The trained model is saved as a checkpoint along with associated hyperparameters 
-                                #       and the class_to_idx dictionary
-                                #-- -----------------------------------------------------------------------------------                             
-                                store_model_checkpoint(trained_model, model_checkpoint_directory, num_of_input_features, \
-                                                       num_of_desired_outputs, trained_classifier, image_datasets, \
-                                                       model_batch_size, trained_epochs, trained_optimizer, trained_loss, \
-                                                       cust_hidden_units)
+                                if trained_classifier != None:
+                                    #-- -----------------------------------------------------------------------------------
+                                    # - The parameters of the feedforward classifier are appropriately trained, 
+                                    #       while the parameters of the feature network are left static
+                                    # - The network's accuracy is measured on the test data
+                                    # - During training, the validation loss and accuracy are displayed
+                                    #-- ----------------------------------------------------------------------------------- 
+                                    trained_model, trained_optimizer, trained_loss, trained_epochs = train_the_model(trained_model, \
+                                                                    model_architecture, __device_available__, model_learning_Rate, \
+                                                                    model_epochs, dataimageloader, testloader)
+                                    
+                                    #-- -----------------------------------------------------------------------------------
+                                    # - There is a function that successfully loads a checkpoint and rebuilds the model
+                                    # - The trained model is saved as a checkpoint along with associated hyperparameters 
+                                    #       and the class_to_idx dictionary
+                                    #-- -----------------------------------------------------------------------------------                             
+                                    store_model_checkpoint(trained_model, model_checkpoint_directory, num_of_input_features, \
+                                                           num_of_desired_outputs, trained_classifier, image_datasets, \
+                                                           model_batch_size, trained_epochs, trained_optimizer, trained_loss, \
+                                                           cust_hidden_units)
                             else:
                                 print('ERROR:  The model training epochs, passed at the command line, is either')
                                 print('        not numeric or is less than or equal to zero: ', model_epochs)                    
